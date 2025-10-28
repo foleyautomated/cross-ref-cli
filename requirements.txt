@@ -1,0 +1,19 @@
+# Core dependencies for cross-ref-cli
+
+# Sentence transformers for embeddings
+sentence-transformers>=2.2.0
+
+# FAISS for vector similarity search
+faiss-cpu>=1.7.4
+
+# Alternative for GPU support (uncomment if needed):
+# faiss-gpu>=1.7.4
+
+# For text processing
+numpy>=1.24.0
+
+# For CSV output
+pandas>=2.0.0
+
+# Progress bars
+tqdm>=4.65.0
