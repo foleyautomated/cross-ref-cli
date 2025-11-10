@@ -14,20 +14,22 @@ from config import config
 class TextChunker:
     """Handles text chunking with configurable size and overlap."""
 
-    def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
+    def __init__(self, chunk_size: int = None, chunk_overlap: int = None, mode: str = 'character'):
         """
         Initialize the text chunker.
 
         Args:
-            chunk_size: Size of each chunk in characters
-            chunk_overlap: Number of characters to overlap between chunks
+            chunk_size: Size of each chunk (in characters or lines depending on mode)
+            chunk_overlap: Overlap between chunks (in characters or lines depending on mode)
+            mode: Chunking mode - 'character' or 'line'
         """
         self.chunk_size = chunk_size or config.chunk_size
         self.chunk_overlap = chunk_overlap or config.chunk_overlap
+        self.mode = mode
 
-    def chunk_text(self, text: str) -> List[Tuple[str, int]]:
+    def chunk_text_by_character(self, text: str) -> List[Tuple[str, int]]:
         """
-        Split text into overlapping chunks.
+        Split text into overlapping chunks by character count.
 
         Args:
             text: The text to chunk
@@ -55,6 +57,57 @@ class TextChunker:
                 break
 
         return chunks
+
+    def chunk_text_by_line(self, text: str) -> List[Tuple[str, int]]:
+        """
+        Split text into overlapping chunks by line count.
+
+        Args:
+            text: The text to chunk
+
+        Returns:
+            List of tuples (chunk_text, start_position)
+        """
+        chunks = []
+        lines = text.split('\n')
+        total_lines = len(lines)
+
+        i = 0
+        while i < total_lines:
+            # Get chunk_size lines starting from line i
+            end_line = min(i + self.chunk_size, total_lines)
+            chunk_lines = lines[i:end_line]
+
+            # Join lines and get the character position
+            chunk_text = '\n'.join(chunk_lines)
+
+            # Calculate character position of start line
+            start_pos = sum(len(line) + 1 for line in lines[:i])  # +1 for newline
+
+            # Only add non-empty chunks
+            if chunk_text.strip():
+                chunks.append((chunk_text, start_pos))
+
+            # Move forward by (chunk_size - overlap) lines
+            step = max(1, self.chunk_size - self.chunk_overlap)
+            i += step
+
+        return chunks
+
+    def chunk_text(self, text: str) -> List[Tuple[str, int]]:
+        """
+        Split text into overlapping chunks.
+
+        Args:
+            text: The text to chunk
+
+        Returns:
+            List of tuples (chunk_text, start_position)
+        """
+        if self.mode == 'line':
+            return self.chunk_text_by_line(text)
+        else:
+            return self.chunk_text_by_character(text)
 
     def chunk_file(self, file_path: str) -> List[Tuple[str, int, int]]:
         """
@@ -163,7 +216,10 @@ class Embedder:
 def embed_document(
     file_path: str,
     model_name: str = None,
-    output_path: str = None
+    output_path: str = None,
+    chunk_size: int = None,
+    chunk_overlap: int = None,
+    chunk_mode: str = 'character'
 ) -> Tuple[faiss.Index, List[Tuple[str, int, int]]]:
     """
     Generate embeddings for a document and create a FAISS index.
@@ -172,6 +228,9 @@ def embed_document(
         file_path: Path to the text file
         model_name: Optional model name override
         output_path: Optional custom output path for FAISS index
+        chunk_size: Optional chunk size override (in characters or lines)
+        chunk_overlap: Optional chunk overlap override (in characters or lines)
+        chunk_mode: Chunking mode - 'character' or 'line' (default: 'character')
 
     Returns:
         Tuple of (FAISS index, list of chunks with metadata)
@@ -189,12 +248,22 @@ def embed_document(
 
     # Chunk the text
     print(f"\nChunking text from: {file_path}")
-    chunker = TextChunker()
+    chunker = TextChunker(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        mode=chunk_mode
+    )
     chunks_with_metadata = chunker.chunk_file(str(file_path_obj))
 
+    # Determine unit for display
+    unit = 'lines' if chunk_mode == 'line' else 'characters'
+    actual_chunk_size = chunk_size or config.chunk_size
+    actual_chunk_overlap = chunk_overlap or config.chunk_overlap
+
     print(f"Created {len(chunks_with_metadata)} chunks")
-    print(f"  Chunk size: {config.chunk_size} characters")
-    print(f"  Chunk overlap: {config.chunk_overlap} characters")
+    print(f"  Chunk mode: {chunk_mode}")
+    print(f"  Chunk size: {actual_chunk_size} {unit}")
+    print(f"  Chunk overlap: {actual_chunk_overlap} {unit}")
 
     # Extract just the text for embedding
     chunk_texts = [chunk[0] for chunk in chunks_with_metadata]
