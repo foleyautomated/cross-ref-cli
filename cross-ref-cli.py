@@ -52,7 +52,7 @@ def resolve_file_path(file_path: str, default_dir: Path = DOCUMENTS_DIR) -> Path
     raise FileNotFoundError(f"File not found: {file_path} (also checked in {default_dir})")
 
 
-def load_faiss_index(faiss_path: str) -> Tuple[faiss.Index, List[Tuple[int, int, int, str]]]:
+def load_faiss_index(faiss_path: str) -> Tuple[faiss.Index, List[Tuple[int, int, int, str, str]]]:
     """
     Load a FAISS index and its associated metadata.
 
@@ -61,7 +61,8 @@ def load_faiss_index(faiss_path: str) -> Tuple[faiss.Index, List[Tuple[int, int,
 
     Returns:
         Tuple of (FAISS index, metadata list)
-        Metadata format: List of tuples (chunk_id, start_pos, line_num, chunk_text)
+        Metadata format: List of tuples (chunk_id, start_pos, line_num, chunk_text, verse_reference)
+        verse_reference will be None for non-Bible texts
 
     Raises:
         FileNotFoundError: If FAISS index or metadata file not found
@@ -92,7 +93,11 @@ def load_faiss_index(faiss_path: str) -> Tuple[faiss.Index, List[Tuple[int, int,
                 line_num = int(parts[2])
                 # Unescape the chunk text
                 chunk_text = parts[3].replace('\\n', '\n').replace('\\t', '\t')
-                metadata.append((chunk_id, start_pos, line_num, chunk_text))
+                # Check if there's a verse reference (5th column)
+                verse_ref = None
+                if len(parts) >= 5:
+                    verse_ref = parts[4].replace('\\n', '\n').replace('\\t', '\t')
+                metadata.append((chunk_id, start_pos, line_num, chunk_text, verse_ref))
 
     print(f"  Loaded {len(metadata)} metadata entries")
 
@@ -222,7 +227,13 @@ def find_references(
     # Collect results above threshold
     results = []
     for query_idx in range(len(query_metadata)):
-        query_chunk_id, query_start_pos, query_line_num, query_text = query_metadata[query_idx]
+        # Handle both old format (4 items) and new format (5 items with verse ref)
+        query_data = query_metadata[query_idx]
+        if len(query_data) == 5:
+            query_chunk_id, query_start_pos, query_line_num, query_text, query_verse_ref = query_data
+        else:
+            query_chunk_id, query_start_pos, query_line_num, query_text = query_data
+            query_verse_ref = None
 
         for k in range(top_k):
             ref_idx = indices[query_idx][k]
@@ -230,17 +241,31 @@ def find_references(
 
             # Filter by threshold
             if similarity >= threshold:
-                ref_chunk_id, ref_start_pos, ref_line_num, ref_text = reference_metadata[ref_idx]
+                # Handle both old format (4 items) and new format (5 items with verse ref)
+                ref_data = reference_metadata[ref_idx]
+                if len(ref_data) == 5:
+                    ref_chunk_id, ref_start_pos, ref_line_num, ref_text, ref_verse_ref = ref_data
+                else:
+                    ref_chunk_id, ref_start_pos, ref_line_num, ref_text = ref_data
+                    ref_verse_ref = None
 
-                results.append({
+                result = {
                     'query_line': query_line_num,
                     'query_chunk_id': query_chunk_id,
                     'query_text': query_text[:config.max_chunk_display],
-                    'reference_line': ref_line_num,
-                    'reference_chunk_id': ref_chunk_id,
-                    'reference_text': ref_text[:config.max_chunk_display],
                     'similarity': similarity
-                })
+                }
+
+                # Add verse reference if available, otherwise use line/chunk info
+                if ref_verse_ref:
+                    result['reference_verse'] = ref_verse_ref
+                    result['reference_text'] = ref_text[:config.max_chunk_display]
+                else:
+                    result['reference_line'] = ref_line_num
+                    result['reference_chunk_id'] = ref_chunk_id
+                    result['reference_text'] = ref_text[:config.max_chunk_display]
+
+                results.append(result)
 
     print(f"\nFound {len(results)} matches above threshold {threshold}")
 
@@ -248,16 +273,30 @@ def find_references(
     if len(results) > 0:
         print(f"Writing results to: {output}")
         with open(output, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = [
-                'query_line',
-                'query_chunk_id',
-                'query_text',
-                'reference_line',
-                'reference_chunk_id',
-                'reference_text',
-                'similarity'
-            ]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            # Determine fieldnames based on whether we have verse references
+            has_verse_refs = any('reference_verse' in r for r in results)
+
+            if has_verse_refs:
+                fieldnames = [
+                    'query_line',
+                    'query_chunk_id',
+                    'query_text',
+                    'reference_verse',
+                    'reference_text',
+                    'similarity'
+                ]
+            else:
+                fieldnames = [
+                    'query_line',
+                    'query_chunk_id',
+                    'query_text',
+                    'reference_line',
+                    'reference_chunk_id',
+                    'reference_text',
+                    'similarity'
+                ]
+
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
             writer.writeheader()
 
             # Sort by similarity (descending) then by query line number
@@ -346,9 +385,9 @@ Examples:
     parser.add_argument(
         "--chunk-mode",
         type=str,
-        choices=['character', 'line'],
+        choices=['character', 'line', 'verse', 'semantic'],
         default=None,
-        help="Chunking mode: 'character' (default) or 'line'"
+        help="Chunking mode: 'character' (default), 'line', 'verse' (for Bible), or 'semantic' (sentence-based)"
     )
 
     # Reference finding options

@@ -3,12 +3,14 @@ Text embedding and FAISS index generation for cross-ref-cli.
 """
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
 from tqdm import tqdm
 from config import config
+from bible_parser import chunk_bible_by_verse
+from semantic_chunker import chunk_text_semantically
 
 
 class TextChunker:
@@ -21,7 +23,7 @@ class TextChunker:
         Args:
             chunk_size: Size of each chunk (in characters or lines depending on mode)
             chunk_overlap: Overlap between chunks (in characters or lines depending on mode)
-            mode: Chunking mode - 'character' or 'line'
+            mode: Chunking mode - 'character', 'line', 'verse', or 'semantic'
         """
         self.chunk_size = chunk_size or config.chunk_size
         self.chunk_overlap = chunk_overlap or config.chunk_overlap
@@ -106,19 +108,41 @@ class TextChunker:
         """
         if self.mode == 'line':
             return self.chunk_text_by_line(text)
+        elif self.mode == 'semantic':
+            raise NotImplementedError("Use chunk_file for semantic mode")
+        elif self.mode == 'verse':
+            raise NotImplementedError("Use chunk_file for verse mode")
         else:
             return self.chunk_text_by_character(text)
 
-    def chunk_file(self, file_path: str) -> List[Tuple[str, int, int]]:
+    def chunk_file(self, file_path: str) -> List[Tuple[str, int, int, Optional[str]]]:
         """
-        Read a file and split it into overlapping chunks.
+        Read a file and split it into chunks.
 
         Args:
             file_path: Path to the text file
 
         Returns:
-            List of tuples (chunk_text, start_position, line_number)
+            List of tuples (chunk_text, start_position, line_number, optional_reference)
+            For verse mode, optional_reference contains the verse reference (e.g., "Genesis 1:1")
         """
+        # Handle verse-based chunking for Bible texts
+        if self.mode == 'verse':
+            verse_chunks = chunk_bible_by_verse(file_path)
+            # verse_chunks format: (text, start_pos, line_num, reference)
+            return verse_chunks
+
+        # Handle semantic chunking
+        if self.mode == 'semantic':
+            semantic_chunks = chunk_text_semantically(
+                file_path,
+                max_chunk_size=self.chunk_size,
+                min_chunk_size=self.chunk_overlap  # Reuse overlap as min_size for semantic mode
+            )
+            # Add None as the 4th element (no verse reference)
+            return [(text, pos, line, None) for text, pos, line in semantic_chunks]
+
+        # Handle character/line based chunking
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
 
@@ -129,7 +153,7 @@ class TextChunker:
         for chunk_text, start_pos in chunks:
             # Count newlines up to this position to get line number
             line_number = text[:start_pos].count('\n') + 1
-            chunks_with_lines.append((chunk_text, start_pos, line_number))
+            chunks_with_lines.append((chunk_text, start_pos, line_number, None))
 
         return chunks_with_lines
 
@@ -145,6 +169,12 @@ class Embedder:
             model_name: HuggingFace model identifier
             device: Device to use for inference ('cpu', 'cuda', 'mps')
         """
+        import os
+        # Force single-threaded execution to avoid multiprocessing issues
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['MKL_NUM_THREADS'] = '1'
+
         self.model_name = model_name or config.embedding_model
         self.device = device or config.device
 
@@ -167,13 +197,15 @@ class Embedder:
         normalize = config.normalize_embeddings
 
         print(f"Generating embeddings for {len(chunks)} chunks...")
+        print("This may take several minutes...")
         embeddings = self.model.encode(
             chunks,
             batch_size=batch_size,
-            show_progress_bar=True,
+            show_progress_bar=False,  # Disabled to avoid multiprocessing issues
             normalize_embeddings=normalize,
             convert_to_numpy=True
         )
+        print("Embedding generation complete!")
 
         return embeddings
 
@@ -256,14 +288,21 @@ def embed_document(
     chunks_with_metadata = chunker.chunk_file(str(file_path_obj))
 
     # Determine unit for display
-    unit = 'lines' if chunk_mode == 'line' else 'characters'
-    actual_chunk_size = chunk_size or config.chunk_size
-    actual_chunk_overlap = chunk_overlap or config.chunk_overlap
+    if chunk_mode == 'verse':
+        unit_info = 'verses (Bible text)'
+    elif chunk_mode == 'semantic':
+        unit_info = 'semantic chunks (sentence-based)'
+    elif chunk_mode == 'line':
+        unit_info = f'{chunk_size or config.chunk_size} lines'
+    else:
+        unit_info = f'{chunk_size or config.chunk_size} characters'
 
     print(f"Created {len(chunks_with_metadata)} chunks")
     print(f"  Chunk mode: {chunk_mode}")
-    print(f"  Chunk size: {actual_chunk_size} {unit}")
-    print(f"  Chunk overlap: {actual_chunk_overlap} {unit}")
+    print(f"  Chunk unit: {unit_info}")
+    if chunk_mode not in ['verse', 'semantic']:
+        actual_chunk_overlap = chunk_overlap or config.chunk_overlap
+        print(f"  Chunk overlap: {actual_chunk_overlap}")
 
     # Extract just the text for embedding
     chunk_texts = [chunk[0] for chunk in chunks_with_metadata]
@@ -279,14 +318,28 @@ def embed_document(
     print(f"\nSaving FAISS index to: {output_path}")
     faiss.write_index(index, str(output_path))
 
-    # Save metadata (chunks with positions and line numbers)
+    # Save metadata (chunks with positions, line numbers, and optional verse references)
     metadata_path = output_path.with_suffix('.metadata.txt')
     print(f"Saving metadata to: {metadata_path}")
     with open(metadata_path, 'w', encoding='utf-8') as f:
-        for i, (chunk_text, start_pos, line_num) in enumerate(chunks_with_metadata):
+        for i, chunk_data in enumerate(chunks_with_metadata):
+            # Handle both old format (3 items) and new format (4 items with optional reference)
+            if len(chunk_data) == 4:
+                chunk_text, start_pos, line_num, verse_ref = chunk_data
+            else:
+                chunk_text, start_pos, line_num = chunk_data
+                verse_ref = None
+
             # Escape the chunk text for storage
             chunk_escaped = chunk_text.replace('\n', '\\n').replace('\t', '\\t')
-            f.write(f"{i}\t{start_pos}\t{line_num}\t{chunk_escaped}\n")
+
+            # Write metadata with optional verse reference
+            if verse_ref:
+                # Escape verse reference too
+                verse_ref_escaped = verse_ref.replace('\n', '\\n').replace('\t', '\\t')
+                f.write(f"{i}\t{start_pos}\t{line_num}\t{chunk_escaped}\t{verse_ref_escaped}\n")
+            else:
+                f.write(f"{i}\t{start_pos}\t{line_num}\t{chunk_escaped}\n")
 
     print(f"\n✓ Successfully created embeddings!")
     print(f"  FAISS index: {output_path}")
