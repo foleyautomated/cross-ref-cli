@@ -137,7 +137,7 @@ class TextChunker:
             semantic_chunks = chunk_text_semantically(
                 file_path,
                 max_chunk_size=self.chunk_size,
-                min_chunk_size=self.chunk_overlap  # Reuse overlap as min_size for semantic mode
+                overlap_sentences=2  # 2 sentences of overlap for context preservation
             )
             # Add None as the 4th element (no verse reference)
             return [(text, pos, line, None) for text, pos, line in semantic_chunks]

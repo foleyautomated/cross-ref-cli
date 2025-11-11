@@ -9,18 +9,19 @@ from typing import List, Tuple
 class SemanticChunker:
     """
     Chunks text semantically by sentences and paragraphs rather than arbitrary character counts.
+    Includes overlap between chunks to preserve context.
     """
 
-    def __init__(self, max_chunk_size: int = 512, min_chunk_size: int = 100):
+    def __init__(self, max_chunk_size: int = 512, overlap_sentences: int = 2):
         """
         Initialize the semantic chunker.
 
         Args:
             max_chunk_size: Maximum characters per chunk (soft limit)
-            min_chunk_size: Minimum characters per chunk (soft limit)
+            overlap_sentences: Number of sentences to overlap between chunks (default: 2)
         """
         self.max_chunk_size = max_chunk_size
-        self.min_chunk_size = min_chunk_size
+        self.overlap_sentences = overlap_sentences
 
     def split_into_sentences(self, text: str) -> List[str]:
         """
@@ -75,7 +76,7 @@ class SemanticChunker:
 
     def chunk_text(self, text: str) -> List[Tuple[str, int]]:
         """
-        Chunk text semantically by grouping sentences.
+        Chunk text semantically by grouping sentences with overlap.
 
         Args:
             text: Text to chunk
@@ -83,54 +84,60 @@ class SemanticChunker:
         Returns:
             List of tuples (chunk_text, start_position)
         """
-        # Split into paragraphs first (double newline or single newline)
+        # Split into paragraphs first (double newline)
         paragraphs = re.split(r'\n\s*\n', text)
 
         chunks = []
+        all_sentences = []  # Store all sentences with their positions
         current_pos = 0
 
+        # First pass: extract all sentences with positions
         for para in paragraphs:
             if not para.strip():
-                current_pos += len(para)
+                current_pos += len(para) + 2  # +2 for paragraph break
                 continue
 
             # Split paragraph into sentences
             sentences = self.split_into_sentences(para)
 
-            # Group sentences into chunks
-            current_chunk = []
-            current_chunk_start = current_pos
-            current_chunk_length = 0
-
             for sentence in sentences:
-                sentence_length = len(sentence) + 1  # +1 for space
-
-                # Check if adding this sentence would exceed max_chunk_size
-                if current_chunk and (current_chunk_length + sentence_length) > self.max_chunk_size:
-                    # Save current chunk
-                    chunk_text = ' '.join(current_chunk).strip()
-                    if chunk_text:
-                        chunks.append((chunk_text, current_chunk_start))
-
-                    # Start new chunk
-                    current_chunk = [sentence]
-                    current_chunk_start = current_pos
-                    current_chunk_length = sentence_length
-                else:
-                    # Add sentence to current chunk
-                    current_chunk.append(sentence)
-                    current_chunk_length += sentence_length
-
-                current_pos += sentence_length
-
-            # Save remaining sentences in chunk
-            if current_chunk:
-                chunk_text = ' '.join(current_chunk).strip()
-                if chunk_text:
-                    chunks.append((chunk_text, current_chunk_start))
+                if sentence.strip():
+                    all_sentences.append((sentence, current_pos))
+                    current_pos += len(sentence) + 1  # +1 for space
 
             # Account for paragraph break
-            current_pos += 2  # For \n\n between paragraphs
+            current_pos += 2
+
+        # Second pass: create overlapping chunks
+        i = 0
+        while i < len(all_sentences):
+            current_chunk_sentences = []
+            current_chunk_length = 0
+            chunk_start_pos = all_sentences[i][1]
+
+            # Add sentences until we reach max_chunk_size
+            j = i
+            while j < len(all_sentences):
+                sentence, _ = all_sentences[j]
+                sentence_length = len(sentence) + 1
+
+                # Check if adding this sentence would exceed limit
+                if current_chunk_sentences and (current_chunk_length + sentence_length) > self.max_chunk_size:
+                    break
+
+                current_chunk_sentences.append(sentence)
+                current_chunk_length += sentence_length
+                j += 1
+
+            # Create chunk
+            if current_chunk_sentences:
+                chunk_text = ' '.join(current_chunk_sentences).strip()
+                chunks.append((chunk_text, chunk_start_pos))
+
+            # Move forward, but overlap by overlap_sentences
+            # This ensures context preservation between chunks
+            advance = max(1, len(current_chunk_sentences) - self.overlap_sentences)
+            i += advance
 
         return chunks
 
@@ -159,17 +166,17 @@ class SemanticChunker:
         return chunks_with_lines
 
 
-def chunk_text_semantically(file_path: str, max_chunk_size: int = 512, min_chunk_size: int = 100) -> List[Tuple[str, int, int]]:
+def chunk_text_semantically(file_path: str, max_chunk_size: int = 512, overlap_sentences: int = 2) -> List[Tuple[str, int, int]]:
     """
-    Chunk a text file semantically by sentences and paragraphs.
+    Chunk a text file semantically by sentences and paragraphs with overlap.
 
     Args:
         file_path: Path to the text file
         max_chunk_size: Maximum characters per chunk
-        min_chunk_size: Minimum characters per chunk
+        overlap_sentences: Number of sentences to overlap between chunks
 
     Returns:
         List of tuples (chunk_text, start_position, line_number)
     """
-    chunker = SemanticChunker(max_chunk_size=max_chunk_size, min_chunk_size=min_chunk_size)
+    chunker = SemanticChunker(max_chunk_size=max_chunk_size, overlap_sentences=overlap_sentences)
     return chunker.chunk_file(file_path)

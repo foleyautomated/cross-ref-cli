@@ -9,51 +9,96 @@ from typing import List, Tuple, Dict
 class BibleParser:
     """Parses Bible text files and extracts verses with proper book/chapter/verse references."""
 
-    # Common book title patterns in KJV format
-    BOOK_PATTERNS = {
-        'Genesis': r'The First Book of Moses.*Genesis',
-        'Exodus': r'The Second Book of Moses.*Exodus',
-        'Leviticus': r'The Third Book of Moses.*Leviticus',
-        'Numbers': r'The Fourth Book of Moses.*Numbers',
-        'Deuteronomy': r'The Fifth Book of Moses.*Deuteronomy',
-        'Matthew': r'The Gospel According to.*Matthew',
-        'Mark': r'The Gospel According to.*Mark',
-        'Luke': r'The Gospel According to.*Luke',
-        'John': r'(?:^The Gospel According to.*John|^The Gospel of .*John)',
-        'Acts': r'The Acts of the Apostles',
-        'Revelation': r'The Revelation of.*John',
-    }
+    # Hardcoded list of KJV book names (scanned from actual kjv.txt)
+    BOOK_NAMES = [
+        ("The First Book of Moses: Called Genesis", "Genesis"),
+        ("The Second Book of Moses: Called Exodus", "Exodus"),
+        ("The Third Book of Moses: Called Leviticus", "Leviticus"),
+        ("The Fourth Book of Moses: Called Numbers", "Numbers"),
+        ("The Fifth Book of Moses: Called Deuteronomy", "Deuteronomy"),
+        ("The Book of Joshua", "Joshua"),
+        ("The Book of Judges", "Judges"),
+        ("The Book of Ruth", "Ruth"),
+        ("The First Book of Samuel", "1 Samuel"),
+        ("The Second Book of Samuel", "2 Samuel"),
+        ("The First Book of the Kings", "1 Kings"),
+        ("The Second Book of the Kings", "2 Kings"),
+        ("The First Book of the Chronicles", "1 Chronicles"),
+        ("The Second Book of the Chronicles", "2 Chronicles"),
+        ("Ezra", "Ezra"),
+        ("The Book of Nehemiah", "Nehemiah"),
+        ("The Book of Esther", "Esther"),
+        ("The Book of Job", "Job"),
+        ("The Book of Psalms", "Psalms"),
+        ("The Proverbs", "Proverbs"),
+        ("Ecclesiastes", "Ecclesiastes"),
+        ("The Song of Solomon", "Song of Solomon"),
+        ("The Book of the Prophet Isaiah", "Isaiah"),
+        ("The Book of the Prophet Jeremiah", "Jeremiah"),
+        ("The Lamentations of Jeremiah", "Lamentations"),
+        ("The Book of the Prophet Ezekiel", "Ezekiel"),
+        ("The Book of Daniel", "Daniel"),
+        ("Hosea", "Hosea"),
+        ("Joel", "Joel"),
+        ("Amos", "Amos"),
+        ("Obadiah", "Obadiah"),
+        ("Jonah", "Jonah"),
+        ("Micah", "Micah"),
+        ("Nahum", "Nahum"),
+        ("Habakkuk", "Habakkuk"),
+        ("Zephaniah", "Zephaniah"),
+        ("Haggai", "Haggai"),
+        ("Zechariah", "Zechariah"),
+        ("Malachi", "Malachi"),
+        ("The Gospel According to Saint Matthew", "Matthew"),
+        ("The Gospel According to Saint Mark", "Mark"),
+        ("The Gospel According to Saint Luke", "Luke"),
+        ("The Gospel According to Saint John", "John"),
+        ("The Acts of the Apostles", "Acts"),
+        ("The Epistle of Paul the Apostle to the Romans", "Romans"),
+        ("The First Epistle of Paul the Apostle to the Corinthians", "1 Corinthians"),
+        ("The Second Epistle of Paul the Apostle to the Corinthians", "2 Corinthians"),
+        ("The Epistle of Paul the Apostle to the Galatians", "Galatians"),
+        ("The Epistle of Paul the Apostle to the Ephesians", "Ephesians"),
+        ("The Epistle of Paul the Apostle to the Philippians", "Philippians"),
+        ("The Epistle of Paul the Apostle to the Colossians", "Colossians"),
+        ("The First Epistle of Paul the Apostle to the Thessalonians", "1 Thessalonians"),
+        ("The Second Epistle of Paul the Apostle to the Thessalonians", "2 Thessalonians"),
+        ("The First Epistle of Paul the Apostle to Timothy", "1 Timothy"),
+        ("The Second Epistle of Paul the Apostle to Timothy", "2 Timothy"),
+        ("The Epistle of Paul the Apostle to Titus", "Titus"),
+        ("The Epistle of Paul the Apostle to Philemon", "Philemon"),
+        ("The Epistle of Paul the Apostle to the Hebrews", "Hebrews"),
+        ("The General Epistle of James", "James"),
+        ("The First Epistle General of Peter", "1 Peter"),
+        ("The Second General Epistle of Peter", "2 Peter"),
+        ("The First Epistle General of John", "1 John"),
+        ("The Second Epistle General of John", "2 John"),
+        ("The Third Epistle General of John", "3 John"),
+        ("The General Epistle of Jude", "Jude"),
+        ("The Revelation of Saint John the Divine", "Revelation"),
+    ]
 
     def __init__(self):
         """Initialize the Bible parser."""
+        self.book_map = {full: short for full, short in self.BOOK_NAMES}
         self.current_book = None
 
-    def extract_book_name(self, text: str) -> str:
+    def is_book_title(self, line: str) -> str:
         """
-        Extract book name from a title line.
+        Check if a line is a book title and return the book name.
 
         Args:
-            text: Line containing book title
+            line: Line of text to check
 
         Returns:
-            Clean book name or None
+            Book name if found, None otherwise
         """
-        text_stripped = text.strip()
+        line_stripped = line.strip()
 
-        # Check known patterns
-        for book_name, pattern in self.BOOK_PATTERNS.items():
-            if re.search(pattern, text_stripped, re.IGNORECASE):
-                return book_name
-
-        # Check for "The Book of X" pattern
-        match = re.search(r'The Book of (\w+)', text_stripped)
-        if match:
-            return match.group(1)
-
-        # Check for "The X Epistle" pattern
-        match = re.search(r'The (?:First|Second|Third|1|2|3)?\s*Epistle.*of.*(\w+)', text_stripped)
-        if match:
-            return match.group(1)
+        # Check against hardcoded book names
+        if line_stripped in self.book_map:
+            return self.book_map[line_stripped]
 
         return None
 
@@ -94,7 +139,7 @@ class BibleParser:
                 continue
 
             # Check if this is a book title line
-            book_name = self.extract_book_name(line_stripped)
+            book_name = self.is_book_title(line_stripped)
             if book_name:
                 current_book = book_name
                 char_pos += len(line) + 1
