@@ -323,8 +323,11 @@ Examples:
   Compare two documents:
     cross-ref-cli.py --compare primary.faiss reference.faiss
 
-  Find references:
+  Find references (semantic similarity):
     cross-ref-cli.py --find-references douglass.faiss kjv.faiss
+
+  Find allusions (NLI entailment):
+    cross-ref-cli.py --find-allusions douglass.txt kjv.txt --entailment-threshold 0.5
         """
     )
 
@@ -350,6 +353,14 @@ Examples:
         nargs=2,
         type=str,
         help="Find passages in query document that reference the reference document (searches documents/ folder by default)"
+    )
+
+    parser.add_argument(
+        "--find-allusions",
+        metavar=("QUERY_TEXT", "BIBLE_TEXT"),
+        nargs=2,
+        type=str,
+        help="Find biblical allusions using NLI (Natural Language Inference) - detects entailment relationships (searches documents/ folder by default)"
     )
 
     # Optional arguments
@@ -405,11 +416,18 @@ Examples:
         help=f"Minimum similarity threshold 0.0-1.0 for --find-references (default: from .env, currently {config.similarity_threshold})"
     )
 
+    parser.add_argument(
+        "--entailment-threshold",
+        type=float,
+        default=0.5,
+        help="Minimum entailment score 0.0-1.0 for --find-allusions (default: 0.5)"
+    )
+
     args = parser.parse_args()
 
     # Validate that at least one operation is specified
-    if not args.embed and not args.compare and not args.find_references:
-        parser.error("Please specify either --embed, --compare, or --find-references")
+    if not args.embed and not args.compare and not args.find_references and not args.find_allusions:
+        parser.error("Please specify either --embed, --compare, --find-references, or --find-allusions")
         return 1
 
     # Execute the appropriate operation
@@ -454,6 +472,37 @@ Examples:
             return 1
         except Exception as e:
             print(f"Error during reference finding: {e}", file=sys.stderr)
+            return 1
+
+    if args.find_allusions:
+        from nli_detector import detect_biblical_allusions
+
+        query_text, bible_text = args.find_allusions
+        try:
+            query_path = resolve_file_path(query_text)
+            bible_path = resolve_file_path(bible_text)
+
+            # Determine output path if not specified
+            output_path = args.output
+            if output_path is None:
+                query_name = Path(query_path).stem
+                bible_name = Path(bible_path).stem
+                output_path = Path(query_path).parent / f"{query_name}_allusions_{bible_name}.csv"
+
+            detect_biblical_allusions(
+                query_text_file=str(query_path),
+                bible_file=str(bible_path),
+                output_csv=str(output_path),
+                entailment_threshold=args.entailment_threshold,
+                top_k=args.top_k or config.top_k
+            )
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"Error during allusion detection: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             return 1
 
     return 0
