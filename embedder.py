@@ -134,10 +134,11 @@ class TextChunker:
 
         # Handle semantic chunking
         if self.mode == 'semantic':
+            # Use paragraph mode with large chunks (defaults: 4096 chars, 3-sentence overlap, paragraph_mode=True)
+            # This keeps entire paragraphs together to avoid mid-sentence/mid-word splits
             semantic_chunks = chunk_text_semantically(
                 file_path,
-                max_chunk_size=self.chunk_size,
-                overlap_sentences=2  # 2 sentences of overlap for context preservation
+                paragraph_mode=True  # Keep entire paragraphs intact
             )
             # Add None as the 4th element (no verse reference)
             return [(text, pos, line, None) for text, pos, line in semantic_chunks]
