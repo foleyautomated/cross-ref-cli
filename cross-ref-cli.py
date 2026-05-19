@@ -363,6 +363,14 @@ Examples:
         help="Find biblical allusions using NLI (Natural Language Inference) - detects entailment relationships (searches documents/ folder by default)"
     )
 
+    parser.add_argument(
+        "--find-allusions-crossencoder",
+        metavar=("QUERY_TEXT", "BIBLE_TEXT"),
+        nargs=2,
+        type=str,
+        help="Find biblical allusions using cross-encoder reranking - more accurate semantic similarity (searches documents/ folder by default)"
+    )
+
     # Optional arguments
     parser.add_argument(
         "--model",
@@ -426,8 +434,8 @@ Examples:
     args = parser.parse_args()
 
     # Validate that at least one operation is specified
-    if not args.embed and not args.compare and not args.find_references and not args.find_allusions:
-        parser.error("Please specify either --embed, --compare, --find-references, or --find-allusions")
+    if not args.embed and not args.compare and not args.find_references and not args.find_allusions and not args.find_allusions_crossencoder:
+        parser.error("Please specify either --embed, --compare, --find-references, --find-allusions, or --find-allusions-crossencoder")
         return 1
 
     # Execute the appropriate operation
@@ -501,6 +509,41 @@ Examples:
             return 1
         except Exception as e:
             print(f"Error during allusion detection: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            return 1
+
+    if args.find_allusions_crossencoder:
+        from cross_encoder_detector import detect_biblical_allusions_crossencoder
+
+        query_text, bible_text = args.find_allusions_crossencoder
+        try:
+            query_path = resolve_file_path(query_text)
+            bible_path = resolve_file_path(bible_text)
+
+            # Determine output path if not specified
+            output_path = args.output
+            if output_path is None:
+                query_name = Path(query_path).stem
+                bible_name = Path(bible_path).stem
+                output_path = Path(query_path).parent / f"{query_name}_crossencoder_{bible_name}.csv"
+
+            detect_biblical_allusions_crossencoder(
+                query_text_file=str(query_path),
+                bible_file=str(bible_path),
+                output_csv=str(output_path),
+                similarity_threshold=args.threshold if args.threshold is not None else 0.5,
+                top_k=args.top_k or config.top_k,
+                semantic_candidates=100,  # Use top 100 semantic candidates for reranking
+                early_stop_count=None,    # Use top_k as early stop count
+                use_hybrid=True,          # Always use hybrid mode
+                model_name="cross-encoder/ms-marco-MiniLM-L-6-v2"
+            )
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"Error during cross-encoder allusion detection: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
             return 1

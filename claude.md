@@ -2,6 +2,7 @@
 
 `cross-ref-cli` is a Python-based command line interface for semantically finding where a body of text quotes or references the Bible. It uses sentence transformers to generate embeddings and FAISS for efficient vector similarity search.
 
+
 ## Project Structure
 
 ```
